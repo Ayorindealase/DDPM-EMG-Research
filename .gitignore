@@ -42,6 +42,8 @@ outputs/logs/**
 outputs/figures/**
 outputs/tables/**
 outputs/metrics/**
+outputs/data_audit/**
+outputs/environment/**
 !outputs/figures/.gitkeep
 !outputs/tables/.gitkeep
 !outputs/metrics/.gitkeep

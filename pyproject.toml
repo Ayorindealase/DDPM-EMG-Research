@@ -6,8 +6,14 @@ build-backend = "setuptools.build_meta"
 name = "emg-diffusion"
 version = "0.1.0"
 description = "Trustworthy physiology- and context-conditioned diffusion modelling for surface EMG"
-readme = "README.md"
 requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.14",
+]
+
+[project.scripts]
+audit-ninapro-db2 = "emg_diffusion.data.audit:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
