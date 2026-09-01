@@ -217,6 +217,142 @@ def repetition_rms_matrix(
     return np.asarray(repetitions), np.vstack(rows)
 
 
+def state_window_rms(
+    record: NinaProRecord,
+    *,
+    window_ms: float = 200.0,
+    step_ms: float = 200.0,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    window_samples = int(round(window_ms * record.sampling_rate_hz / 1000.0))
+    step_samples = int(round(step_ms * record.sampling_rate_hz / 1000.0))
+    if window_samples <= 0 or step_samples <= 0:
+        raise ValueError("window and step durations must be positive")
+
+    rest_rows = []
+    active_rows = []
+    excluded_windows = 0
+    last_start = record.emg.shape[0] - window_samples
+    for start in range(0, last_start + 1, step_samples):
+        stop = start + window_samples
+        window_labels = record.labels[start:stop]
+        if np.all(window_labels == 0):
+            destination = rest_rows
+        elif window_labels[0] > 0 and np.all(window_labels == window_labels[0]):
+            destination = active_rows
+        else:
+            excluded_windows += 1
+            continue
+        window = np.asarray(record.emg[start:stop], dtype=np.float64)
+        destination.append(np.sqrt(np.mean(np.square(window), axis=0)))
+
+    channel_count = record.emg.shape[1]
+    rest = (
+        np.vstack(rest_rows)
+        if rest_rows
+        else np.empty((0, channel_count), dtype=np.float64)
+    )
+    active = (
+        np.vstack(active_rows)
+        if active_rows
+        else np.empty((0, channel_count), dtype=np.float64)
+    )
+    return rest, active, excluded_windows
+
+
+def gesture_channel_rms(
+    record: NinaProRecord,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    grouped: dict[int, list[np.ndarray]] = {}
+    for segment in contiguous_trials(record.labels, record.repetitions):
+        start = segment["start_sample"]
+        stop = segment["stop_sample"]
+        signal = np.asarray(record.emg[start:stop], dtype=np.float64)
+        rms = np.sqrt(np.mean(np.square(signal), axis=0))
+        grouped.setdefault(segment["movement"], []).append(rms)
+
+    movements = np.asarray(sorted(grouped), dtype=np.int32)
+    mean_rms = np.vstack(
+        [np.mean(np.vstack(grouped[movement]), axis=0) for movement in movements]
+    )
+    standard_deviation = np.vstack(
+        [np.std(np.vstack(grouped[movement]), axis=0) for movement in movements]
+    )
+    return movements, mean_rms, standard_deviation
+
+
+def trial_feature_matrix(
+    record: NinaProRecord,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[str, ...]]:
+    feature_rows = []
+    movement_labels = []
+    repetition_labels = []
+    for segment in contiguous_trials(record.labels, record.repetitions):
+        start = segment["start_sample"]
+        stop = segment["stop_sample"]
+        signal = np.asarray(record.emg[start:stop], dtype=np.float64)
+        rms = np.sqrt(np.mean(np.square(signal), axis=0))
+        mean_waveform_length = np.mean(np.abs(np.diff(signal, axis=0)), axis=0)
+        feature_rows.append(
+            np.concatenate(
+                (
+                    np.log10(np.maximum(rms, np.finfo(float).tiny)),
+                    np.log10(
+                        np.maximum(
+                            mean_waveform_length, np.finfo(float).tiny
+                        )
+                    ),
+                )
+            )
+        )
+        movement_labels.append(segment["movement"])
+        repetition_labels.append(segment["repetition"])
+
+    channel_count = record.emg.shape[1]
+    names = tuple(
+        [f"log_rms_ch{channel}" for channel in range(1, channel_count + 1)]
+        + [
+            f"log_mean_wl_ch{channel}"
+            for channel in range(1, channel_count + 1)
+        ]
+    )
+    return (
+        np.vstack(feature_rows),
+        np.asarray(movement_labels, dtype=np.int32),
+        np.asarray(repetition_labels, dtype=np.int32),
+        names,
+    )
+
+
+def principal_component_projection(
+    features: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    values = np.asarray(features, dtype=np.float64)
+    if values.ndim != 2 or values.shape[0] < 2:
+        raise ValueError("features must contain at least two observations")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("features must be finite")
+
+    mean = np.mean(values, axis=0)
+    standard_deviation = np.std(values, axis=0, ddof=0)
+    standard_deviation[standard_deviation == 0.0] = 1.0
+    standardized = (values - mean) / standard_deviation
+    _, singular_values, components = np.linalg.svd(
+        standardized, full_matrices=False
+    )
+    scores = standardized @ components.T
+    component_variance = np.square(singular_values) / (values.shape[0] - 1)
+    explained_ratio = component_variance / np.sum(component_variance)
+    return scores, explained_ratio, components
+
+
+def movement_rms_profile(
+    record: NinaProRecord,
+    movement: int,
+) -> np.ndarray:
+    _, rms = repetition_rms_matrix(record, movement)
+    return np.mean(rms, axis=0)
+
+
 def plot_record_overview(
     record: NinaProRecord,
     *,
@@ -474,6 +610,225 @@ def plot_repetition_variability(
     return figure, repetitions, rms
 
 
+def plot_rest_active_rms(
+    rest_rms: np.ndarray,
+    active_rms: np.ndarray,
+    *,
+    window_ms: float,
+) -> plt.Figure:
+    if rest_rms.ndim != 2 or active_rms.ndim != 2:
+        raise ValueError("rest and active RMS arrays must be two-dimensional")
+    if rest_rms.shape[1] != active_rms.shape[1]:
+        raise ValueError("rest and active RMS arrays must have equal channel counts")
+
+    channel_count = rest_rms.shape[1]
+    channels = np.arange(1, channel_count + 1)
+    figure, axis = plt.subplots(figsize=(13, 5.4), constrained_layout=True)
+    rest_plot = axis.boxplot(
+        [rest_rms[:, index] for index in range(channel_count)],
+        positions=channels - 0.18,
+        widths=0.30,
+        patch_artist=True,
+        showfliers=False,
+        manage_ticks=False,
+    )
+    active_plot = axis.boxplot(
+        [active_rms[:, index] for index in range(channel_count)],
+        positions=channels + 0.18,
+        widths=0.30,
+        patch_artist=True,
+        showfliers=False,
+        manage_ticks=False,
+    )
+    _style_boxplot(rest_plot, BLUE)
+    _style_boxplot(active_plot, ORANGE)
+    axis.plot([], [], color=BLUE, linewidth=8, label="Rest-only windows")
+    axis.plot([], [], color=ORANGE, linewidth=8, label="Single-gesture windows")
+    axis.set_yscale("log")
+    axis.set_xticks(channels)
+    axis.set_xlabel("sEMG channel")
+    axis.set_ylabel("Window RMS amplitude (recorded units, log scale)")
+    axis.set_title(
+        f"Rest versus active amplitude in transition-free {window_ms:g} ms windows"
+    )
+    axis.legend(frameon=False, ncols=2)
+    axis.grid(axis="y", alpha=0.25)
+    return figure
+
+
+def plot_gesture_channel_atlas(
+    movements: np.ndarray,
+    mean_rms: np.ndarray,
+) -> plt.Figure:
+    values = np.asarray(mean_rms, dtype=np.float64)
+    if values.ndim != 2 or values.shape[0] != movements.size:
+        raise ValueError("movement labels and mean RMS rows must agree")
+    relative = values / np.maximum(
+        np.max(values, axis=1, keepdims=True), np.finfo(float).tiny
+    )
+
+    figure, axes = plt.subplots(
+        1, 2, figsize=(13, 7.2), constrained_layout=True
+    )
+    absolute_image = axes[0].imshow(
+        np.log10(np.maximum(values, np.finfo(float).tiny)),
+        cmap="magma",
+        aspect="auto",
+    )
+    axes[0].set_title("(a) Mean RMS magnitude")
+    axes[0].set_xlabel("sEMG channel")
+    axes[0].set_ylabel("Gesture label")
+    figure.colorbar(
+        absolute_image,
+        ax=axes[0],
+        label="log10 RMS (recorded units)",
+    )
+
+    relative_image = axes[1].imshow(
+        relative,
+        cmap="cividis",
+        aspect="auto",
+        vmin=0,
+        vmax=1,
+    )
+    axes[1].set_title("(b) Within-gesture channel profile")
+    axes[1].set_xlabel("sEMG channel")
+    axes[1].set_ylabel("Gesture label")
+    figure.colorbar(
+        relative_image,
+        ax=axes[1],
+        label="RMS / maximum channel RMS for that gesture",
+    )
+    for axis in axes:
+        axis.set_xticks(np.arange(values.shape[1]), labels=np.arange(1, values.shape[1] + 1))
+        axis.set_yticks(np.arange(movements.size), labels=movements)
+    return figure
+
+
+def plot_trial_pca(
+    scores: np.ndarray,
+    explained_ratio: np.ndarray,
+    movement_labels: np.ndarray,
+) -> plt.Figure:
+    if scores.ndim != 2 or scores.shape[1] < 2:
+        raise ValueError("PCA scores must contain at least two components")
+    if scores.shape[0] != movement_labels.size:
+        raise ValueError("PCA observations and labels must agree")
+
+    figure, axes = plt.subplots(
+        1, 2, figsize=(13, 5.4), constrained_layout=True
+    )
+    movement_values = np.unique(movement_labels)
+    color_map = plt.get_cmap("turbo")
+    colors = color_map(
+        np.linspace(0.05, 0.95, movement_values.size)
+    )
+    for movement, color in zip(movement_values, colors, strict=True):
+        mask = movement_labels == movement
+        axes[0].scatter(
+            scores[mask, 0],
+            scores[mask, 1],
+            s=28,
+            color=color,
+            alpha=0.65,
+            edgecolor=INK,
+            linewidth=0.25,
+        )
+        centroid = np.mean(scores[mask, :2], axis=0)
+        axes[0].text(
+            centroid[0],
+            centroid[1],
+            str(int(movement)),
+            ha="center",
+            va="center",
+            fontsize=8,
+            fontweight="bold",
+            bbox={"boxstyle": "circle,pad=0.18", "fc": "white", "alpha": 0.75},
+        )
+    axes[0].set_xlabel(f"PC1 ({100 * explained_ratio[0]:.1f}% variance)")
+    axes[0].set_ylabel(f"PC2 ({100 * explained_ratio[1]:.1f}% variance)")
+    axes[0].set_title("(a) Trial features projected into two dimensions")
+    axes[0].grid(alpha=0.2)
+
+    component_count = min(10, explained_ratio.size)
+    components = np.arange(1, component_count + 1)
+    axes[1].bar(
+        components,
+        100 * explained_ratio[:component_count],
+        color=PURPLE,
+        edgecolor=INK,
+        linewidth=0.5,
+    )
+    axes[1].plot(
+        components,
+        100 * np.cumsum(explained_ratio[:component_count]),
+        color=ORANGE,
+        marker="o",
+        label="Cumulative variance",
+    )
+    axes[1].set_xticks(components)
+    axes[1].set_xlabel("Principal component")
+    axes[1].set_ylabel("Explained variance (%)")
+    axes[1].set_title("(b) Information retained by each component")
+    axes[1].legend(frameon=False)
+    axes[1].grid(axis="y", alpha=0.25)
+    return figure
+
+
+def plot_subject_channel_profiles(
+    subject_ids: np.ndarray,
+    profiles: np.ndarray,
+    *,
+    movement: int,
+) -> plt.Figure:
+    values = np.asarray(profiles, dtype=np.float64)
+    if values.ndim != 2 or values.shape[0] != subject_ids.size:
+        raise ValueError("subject IDs and profile rows must agree")
+    relative = values / np.maximum(
+        np.max(values, axis=1, keepdims=True), np.finfo(float).tiny
+    )
+
+    figure, axes = plt.subplots(
+        1, 2, figsize=(13, 4.8), constrained_layout=True
+    )
+    absolute_image = axes[0].imshow(
+        np.log10(np.maximum(values, np.finfo(float).tiny)),
+        cmap="magma",
+        aspect="auto",
+    )
+    axes[0].set_title("(a) Absolute mean RMS")
+    axes[0].set_xlabel("sEMG channel")
+    axes[0].set_ylabel("DB2 subject")
+    figure.colorbar(
+        absolute_image,
+        ax=axes[0],
+        label="log10 RMS (recorded units)",
+    )
+
+    relative_image = axes[1].imshow(
+        relative,
+        cmap="cividis",
+        aspect="auto",
+        vmin=0,
+        vmax=1,
+    )
+    axes[1].set_title("(b) Within-subject channel profile")
+    axes[1].set_xlabel("sEMG channel")
+    axes[1].set_ylabel("DB2 subject")
+    figure.colorbar(
+        relative_image,
+        ax=axes[1],
+        label="RMS / subject-specific maximum channel RMS",
+    )
+    for axis in axes:
+        axis.set_xticks(np.arange(values.shape[1]), labels=np.arange(1, values.shape[1] + 1))
+        axis.set_yticks(np.arange(subject_ids.size), labels=subject_ids)
+    figure.suptitle(
+        f"Gesture {movement}: fixed-subset illustration of cross-subject variation"
+    )
+    return figure
+
+
 def save_figure(
     figure: plt.Figure,
     output_dir: Path,
@@ -535,6 +890,19 @@ def _positive_normalise(values: np.ndarray) -> np.ndarray:
     if scale == 0.0:
         return np.zeros_like(values)
     return values / scale
+
+
+def _style_boxplot(boxplot: dict[str, list], color: str) -> None:
+    for box in boxplot["boxes"]:
+        box.set_facecolor(color)
+        box.set_alpha(0.65)
+        box.set_edgecolor(INK)
+    for median in boxplot["medians"]:
+        median.set_color(INK)
+        median.set_linewidth(1.2)
+    for element in ("whiskers", "caps"):
+        for artist in boxplot[element]:
+            artist.set_color(INK)
 
 
 def _embed_svg_accessibility(path: Path, title: str, description: str) -> None:
