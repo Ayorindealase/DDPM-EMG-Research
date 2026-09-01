@@ -1,0 +1,38 @@
+experiment:
+  name: null
+  seed: null
+  output_dir: null
+
+data:
+  dataset: ninapro_db2
+  raw_dir: data/raw/ninapro_db2
+  split_manifest: null
+  subject_disjoint: true
+  sampling_rate_hz: null
+  channels: null
+
+preprocessing:
+  filter: null
+  normalization: null
+  window_ms: null
+  stride_ms: null
+
+model:
+  architecture: null
+  conditioning: []
+  diffusion_steps: null
+  noise_schedule: null
+
+training:
+  epochs: null
+  batch_size: null
+  learning_rate: null
+  precision: null
+
+evaluation:
+  fidelity_metrics: []
+  coverage_metrics: []
+  utility_metrics: []
+  privacy_metrics: []
+  robustness_metrics: []
+  efficiency_metrics: []

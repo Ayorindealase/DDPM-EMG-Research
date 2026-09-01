@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments and secrets
+.venv/
+venv/
+.env
+.env.*
+
+# Jupyter and editors
+.ipynb_checkpoints/
+.DS_Store
+.vscode/
+
+# Internal research notes and generated documentation
+*.md
+
+# Immutable or generated research data
+data/raw/**
+data/interim/**
+data/processed/**
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+
+# Large model artifacts and transient outputs
+models/checkpoints/**
+!models/checkpoints/.gitkeep
+outputs/generated_signals/**
+outputs/logs/**
+!outputs/generated_signals/.gitkeep
+!outputs/logs/.gitkeep
+
+# Generated result artifacts
+outputs/figures/**
+outputs/tables/**
+outputs/metrics/**
+!outputs/figures/.gitkeep
+!outputs/tables/.gitkeep
+!outputs/metrics/.gitkeep
+
+# Local caches
+*.tmp
+*.log
