@@ -12,11 +12,6 @@ from matplotlib.colors import ListedColormap
 from matplotlib.patches import FancyBboxPatch
 
 
-ROLE_CODE = {
-    "source_train": 0,
-    "source_validation": 1,
-    "pseudo_target": 2,
-}
 ROLE_LABEL = {0: "S", 1: "V", 2: "T"}
 ROLE_COLOR = ["#0072B2", "#CC79A7", "#E69F00"]
 
@@ -53,6 +48,7 @@ def build_figure(
             "axes.titlesize": 11,
             "axes.labelsize": 9,
             "figure.facecolor": "white",
+            "svg.fonttype": "none",
         }
     )
     fig = plt.figure(figsize=(11.5, 8.0), constrained_layout=True)
@@ -179,9 +175,28 @@ def build_figure(
     )
 
     output_prefix.parent.mkdir(parents=True, exist_ok=True)
-    for suffix in ("svg", "pdf", "png"):
-        options = {"dpi": 320} if suffix == "png" else {}
-        fig.savefig(output_prefix.with_suffix(f".{suffix}"), bbox_inches="tight", **options)
+    figure_title = "NinaPro DB2 pilot data accounting and leakage-resistant design"
+    figure_description = (
+        "Four-panel measured-data figure showing the complete DB2 audit, "
+        "quality checks, the seeded four-fold participant design, and the "
+        "Exercise-1 generator and classifier window counts."
+    )
+    fig.savefig(
+        output_prefix.with_suffix(".svg"),
+        bbox_inches="tight",
+        metadata={"Title": figure_title, "Description": figure_description},
+    )
+    fig.savefig(
+        output_prefix.with_suffix(".pdf"),
+        bbox_inches="tight",
+        metadata={"Title": figure_title, "Subject": figure_description},
+    )
+    fig.savefig(
+        output_prefix.with_suffix(".png"),
+        bbox_inches="tight",
+        dpi=320,
+        metadata={"Title": figure_title, "Description": figure_description},
+    )
     plt.close(fig)
 
     caption = (
