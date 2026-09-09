@@ -186,6 +186,17 @@ def build_figure(
         bbox_inches="tight",
         metadata={"Title": figure_title, "Description": figure_description},
     )
+    svg_path = output_prefix.with_suffix(".svg")
+    svg_text = svg_path.read_text(encoding="utf-8")
+    svg_root_end = svg_text.find(">", svg_text.find("<svg"))
+    if svg_root_end < 0:
+        raise RuntimeError("generated SVG does not contain an <svg> root element")
+    svg_text = (
+        svg_text[: svg_root_end + 1]
+        + f"\n <desc>{figure_description}</desc>"
+        + svg_text[svg_root_end + 1 :]
+    )
+    svg_path.write_text(svg_text, encoding="utf-8")
     fig.savefig(
         output_prefix.with_suffix(".pdf"),
         bbox_inches="tight",
