@@ -1,0 +1,64 @@
+experiment:
+  name: db2_structured_covariance_pilot_v1
+  status: pre_training
+  split_seed: 20260830
+  training_seeds: [17, 42, 2026]
+  primary_question: context_adaptive_structured_vs_isotropic_diffusion
+
+data:
+  dataset: ninapro_db2
+  exercise: 1
+  active_movements: 17
+  sampling_rate_hz: 2000
+  channels: 12
+  label_source: refined
+  development_participants: 16
+  confirmatory_participants_locked: 24
+  outer_folds: 4
+  source_train_participants_per_fold: 10
+  source_validation_participants_per_fold: 2
+  pseudo_target_participants_per_fold: 4
+  target_calibration_candidates: [1, 3, 4, 6]
+  target_test_repetitions: [2, 5]
+
+windowing:
+  split_before_windowing: true
+  generator_window_ms: 1000
+  generator_step_ms: 500
+  classifier_window_ms: 200
+  classifier_step_ms: 100
+  cross_trial_boundaries: false
+
+pilot_comparison:
+  covariance_variants:
+    - isotropic
+    - fixed_source_whitening
+    - global_channel_time
+    - context_adaptive_channel_time
+  calibration_budgets_repetitions: [0, 1, 2]
+  synthetic_to_real_ratio: 1.0
+  primary_metric: participant_level_balanced_accuracy
+  secondary_metric: participant_level_macro_f1
+  practical_degradation_margin_points: null
+  practical_degradation_margin_status: requires_supervisor_approval_before_training
+
+preprocessing:
+  additional_filter: none_unless_audit_justifies
+  scaling: source_train_robust_scale_candidate
+  target_test_statistics_allowed: false
+  inverse_transform_required: true
+
+model:
+  denoiser: convolution_only_1d_unet
+  activation: silu
+  conditions: [gesture, timestep, permitted_context_descriptor]
+  diffusion_steps: null
+  noise_schedule: null
+  status: architecture_hyperparameters_not_yet_frozen
+
+reporting:
+  independent_unit: participant
+  interval: participant_cluster_bootstrap_95_percent
+  retain_all_seeds: true
+  report_failed_runs: true
+  numerical_results_authorized: false
